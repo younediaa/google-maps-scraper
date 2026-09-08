@@ -23,6 +23,7 @@
                             <th>Rating <button type="button" class="sort-button" data-sort="review_rating" aria-label="Sort by rating">↕</button></th>
                             <th>Reviews <button type="button" class="sort-button" data-sort="review_count" aria-label="Sort by review count">↕</button></th>
                             <th>Phone</th>
+                            <th>Email</th>
                             <th>Website</th>
                             <th>Address</th>
                             <th>Category</th>
@@ -77,7 +78,7 @@
         function renderTable(rows) {
             var body = document.querySelector('#results-table tbody');
             if (!rows.length) {
-                body.innerHTML = '<tr><td class="results-empty" colspan="7">No businesses match this filter.</td></tr>';
+                body.innerHTML = '<tr><td class="results-empty" colspan="8">No businesses match this filter.</td></tr>';
                 return;
             }
             body.innerHTML = rows.map(function (place) {
@@ -87,6 +88,7 @@
                     '<td>' + (place.review_rating ? '★ ' + escapeHtml(place.review_rating) : '—') + '</td>' +
                     '<td>' + (place.review_count || '—') + '</td>' +
                     '<td>' + escapeHtml(place.phone || '—') + '</td>' +
+                    '<td>' + escapeHtml(place.emails || '') + '</td>' +
                     '<td>' + (website ? '<a class="website-link" href="' + website + '" target="_blank" rel="noopener noreferrer">Visit site ↗</a>' : '—') + '</td>' +
                     '<td>' + escapeHtml(place.address || '—') + '</td>' +
                     '<td>' + escapeHtml(place.category || '—') + '</td>' +
@@ -99,7 +101,8 @@
                 place.title,
                 place.category,
                 place.address,
-                place.phone
+                place.phone,
+                place.emails
             ].map(function (value) {
                 return value == null ? '' : String(value).toLowerCase();
             }).join(' ');
@@ -164,6 +167,7 @@
                     review_rating: Number(record.review_rating || 0),
                     review_count: Number(record.review_count || 0),
                     phone: record.phone,
+                    emails: record.emails,
                     website: record.web_site || record.website,
                     address: record.address,
                     category: record.category

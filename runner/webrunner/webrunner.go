@@ -158,8 +158,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
+	fileClosed := false
 	defer func() {
-		_ = outfile.Close()
+		if !fileClosed {
+			_ = outfile.Close()
+		}
 	}()
 
 	setupMate := w.setupMate
@@ -179,7 +182,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	defer mate.Close()
+	mateClosed := false
+	defer func() {
+		if !mateClosed {
+			_ = mate.Close()
+		}
+	}()
 
 	var coords string
 	if job.Data.Lat != "" && job.Data.Lon != "" {
@@ -252,6 +260,22 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 
 		cancel()
+	}
+
+	mateClosed = true
+	if err := mate.Close(); err != nil {
+		job.Status = web.StatusFailed
+		_ = w.svc.Update(ctx, job)
+
+		return err
+	}
+
+	fileClosed = true
+	if err := outfile.Close(); err != nil {
+		job.Status = web.StatusFailed
+		_ = w.svc.Update(ctx, job)
+
+		return err
 	}
 
 	job.Status = web.StatusOK

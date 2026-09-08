@@ -246,7 +246,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		Lat:      "0",
 		Lon:      "0",
 		Depth:    10,
-		Email:    false,
+		Email:    true,
 	}
 
 	_ = tmpl.Execute(w, data)

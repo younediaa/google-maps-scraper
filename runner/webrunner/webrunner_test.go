@@ -12,7 +12,7 @@ import (
 	"github.com/gosom/scrapemate"
 )
 
-func TestScrapeJobMarksOKBeforeClosingMate(t *testing.T) {
+func TestScrapeJobMarksOKAfterClosingMate(t *testing.T) {
 	t.Parallel()
 
 	repo := &memoryJobRepo{}
@@ -49,8 +49,8 @@ func TestScrapeJobMarksOKBeforeClosingMate(t *testing.T) {
 					if err != nil {
 						t.Fatalf("get job during close: %v", err)
 					}
-					if got.Status != web.StatusOK {
-						t.Fatalf("status during close = %q, want %q", got.Status, web.StatusOK)
+					if got.Status != web.StatusWorking {
+						t.Fatalf("status during close = %q, want %q", got.Status, web.StatusWorking)
 					}
 				},
 			}, nil
@@ -59,6 +59,14 @@ func TestScrapeJobMarksOKBeforeClosingMate(t *testing.T) {
 
 	if err := w.scrapeJob(context.Background(), &job); err != nil {
 		t.Fatalf("scrape job: %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get completed job: %v", err)
+	}
+	if got.Status != web.StatusOK {
+		t.Fatalf("status after close = %q, want %q", got.Status, web.StatusOK)
 	}
 }
 

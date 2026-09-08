@@ -24,6 +24,7 @@ type Place struct {
 	Link         string  `json:"link"`
 	Category     string  `json:"category"`
 	Phone        string  `json:"phone"`
+	Emails       string  `json:"emails"`
 	Website      string  `json:"website"`
 	ReviewRating float64 `json:"review_rating"`
 }
@@ -127,6 +128,7 @@ func parsePlaces(r io.Reader) ([]Place, error) {
 			Link:         get(row, "link"),
 			Category:     get(row, "category"),
 			Phone:        get(row, "phone"),
+			Emails:       get(row, "emails"),
 			Website:      get(row, "website"),
 			ReviewRating: rating,
 		})

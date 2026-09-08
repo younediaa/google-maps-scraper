@@ -3,6 +3,7 @@ package gmaps
 import (
 	"context"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -13,6 +14,8 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 )
 
+var emailPattern = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+
 type EmailExtractJobOptions func(*EmailExtractJob)
 
 type EmailExtractJob struct {
@@ -21,6 +24,8 @@ type EmailExtractJob struct {
 	Entry                   *Entry
 	ExitMonitor             exiter.Exiter
 	WriterManagedCompletion bool
+	IsContactPage           bool
+	UsageInResults          bool
 }
 
 func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) *EmailExtractJob {
@@ -41,6 +46,7 @@ func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) 
 	}
 
 	job.Entry = entry
+	job.UsageInResults = true
 
 	for _, opt := range opts {
 		opt(&job)
@@ -67,8 +73,9 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 		resp.Body = nil
 	}()
 
+	completesEntry := true
 	defer func() {
-		if j.ExitMonitor != nil && !j.WriterManagedCompletion {
+		if completesEntry && j.ExitMonitor != nil && !j.WriterManagedCompletion {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 	}()
@@ -77,28 +84,36 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	log.Info("Processing email job", "url", j.URL)
 
-	// if html fetch failed just return
-	if resp.Error != nil {
-		return j.Entry, nil, nil
+	var emails []string
+	if resp.Error == nil {
+		if doc, ok := resp.Document.(*goquery.Document); ok {
+			emails = append(emails, docEmailExtractor(doc)...)
+		}
+		emails = append(emails, regexEmailExtractor(resp.Body)...)
 	}
 
-	doc, ok := resp.Document.(*goquery.Document)
-	if !ok {
-		return j.Entry, nil, nil
-	}
+	j.Entry.Emails = mergeEmails(j.Entry.Emails, emails)
 
-	emails := docEmailExtractor(doc)
-	if len(emails) == 0 {
-		emails = regexEmailExtractor(resp.Body)
-	}
+	if !j.IsContactPage {
+		contactURL, ok := contactPageURL(j.URL)
+		if ok {
+			contactJob := NewEmailContactJob(j.ID, contactURL, j.Entry, j.ExitMonitor, j.WriterManagedCompletion)
+			j.UsageInResults = false
+			completesEntry = false
 
-	j.Entry.Emails = emails
+			return nil, []scrapemate.IJob{contactJob}, nil
+		}
+	}
 
 	return j.Entry, nil, nil
 }
 
 func (j *EmailExtractJob) ProcessOnFetchError() bool {
 	return true
+}
+
+func (j *EmailExtractJob) UseInResults() bool {
+	return j.UsageInResults
 }
 
 func docEmailExtractor(doc *goquery.Document) []string {
@@ -127,11 +142,60 @@ func regexEmailExtractor(body []byte) []string {
 
 	var emails []string
 
-	addresses := emailaddress.Find(body, false)
+	addresses := emailPattern.FindAll(body, -1)
 	for i := range addresses {
-		if !seen[addresses[i].String()] {
-			emails = append(emails, addresses[i].String())
-			seen[addresses[i].String()] = true
+		email := string(addresses[i])
+		if !seen[email] {
+			emails = append(emails, email)
+			seen[email] = true
+		}
+	}
+
+	return emails
+}
+
+func NewEmailContactJob(
+	parentID, contactURL string,
+	entry *Entry,
+	exitMonitor exiter.Exiter,
+	writerManagedCompletion bool,
+) *EmailExtractJob {
+	job := NewEmailJob(parentID, entry)
+	job.URL = contactURL
+	job.IsContactPage = true
+	job.ExitMonitor = exitMonitor
+	job.WriterManagedCompletion = writerManagedCompletion
+
+	return job
+}
+
+func contactPageURL(website string) (string, bool) {
+	parsed, err := url.Parse(normalizeGoogleURL(website))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", false
+	}
+
+	parsed.Path = "/contact"
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+
+	return parsed.String(), true
+}
+
+func mergeEmails(groups ...[]string) []string {
+	seen := make(map[string]bool)
+	emails := make([]string, 0)
+
+	for _, group := range groups {
+		for _, email := range group {
+			normalized := strings.ToLower(strings.TrimSpace(email))
+			if normalized == "" || seen[normalized] {
+				continue
+			}
+
+			seen[normalized] = true
+			emails = append(emails, email)
 		}
 	}
 
