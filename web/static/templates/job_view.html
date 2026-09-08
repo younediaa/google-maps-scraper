@@ -6,7 +6,13 @@
         </div>
         <div class="map-modal-body">
             <div class="results-toolbar">
-                <p id="results-count">Loading results…</p>
+                <div class="results-summary">
+                    <p id="results-count" aria-live="polite">Loading results…</p>
+                    <label class="results-search">
+                        <span>Filter results</span>
+                        <input id="results-filter" type="search" placeholder="Name, category, address, or phone" autocomplete="off">
+                    </label>
+                </div>
                 <a id="results-export" class="button download-button" href="#" download>Export CSV</a>
             </div>
             <div class="table-scroll">
@@ -25,6 +31,21 @@
                     <tbody></tbody>
                 </table>
             </div>
+            <div class="results-pagination" aria-label="Results pagination">
+                <label class="page-size-control">
+                    <span>Rows per page</span>
+                    <select id="results-page-size">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                    </select>
+                </label>
+                <div class="page-navigation">
+                    <button id="results-previous" type="button" class="pagination-button">Previous</button>
+                    <span id="results-page-status" aria-live="polite">Page 1 of 1</span>
+                    <button id="results-next" type="button" class="pagination-button">Next</button>
+                </div>
+            </div>
             <div class="map-panel">
                 <div id="job-map"></div>
                 <div id="job-places-list"></div>
@@ -35,7 +56,11 @@
     (function () {
         var places = {{ . }};
         var tableRows = places.slice();
+        var filteredRows = [];
         var sortDirections = {};
+        var activeSort = null;
+        var currentPage = 1;
+        var pageSize = 50;
         var LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
         var LEAFLET_JS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
 
@@ -51,6 +76,10 @@
 
         function renderTable(rows) {
             var body = document.querySelector('#results-table tbody');
+            if (!rows.length) {
+                body.innerHTML = '<tr><td class="results-empty" colspan="7">No businesses match this filter.</td></tr>';
+                return;
+            }
             body.innerHTML = rows.map(function (place) {
                 var website = safeURL(place.website);
                 return '<tr>' +
@@ -63,6 +92,47 @@
                     '<td>' + escapeHtml(place.category || '—') + '</td>' +
                 '</tr>';
             }).join('');
+        }
+
+        function searchableText(place) {
+            return [
+                place.title,
+                place.category,
+                place.address,
+                place.phone
+            ].map(function (value) {
+                return value == null ? '' : String(value).toLowerCase();
+            }).join(' ');
+        }
+
+        function applyResultsView() {
+            var query = document.getElementById('results-filter').value.trim().toLowerCase();
+            filteredRows = tableRows.filter(function (place) {
+                return !query || searchableText(place).indexOf(query) !== -1;
+            });
+
+            if (activeSort) {
+                filteredRows.sort(function (a, b) {
+                    var result = Number(a[activeSort] || 0) - Number(b[activeSort] || 0);
+                    return sortDirections[activeSort] === 'asc' ? result : -result;
+                });
+            }
+
+            var totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+            currentPage = Math.min(currentPage, totalPages);
+            var start = (currentPage - 1) * pageSize;
+            renderTable(filteredRows.slice(start, start + pageSize));
+
+            var count = filteredRows.length;
+            var total = tableRows.length;
+            document.getElementById('results-count').textContent = query
+                ? count + ' of ' + total + (total === 1 ? ' business' : ' businesses')
+                : total + (total === 1 ? ' business found' : ' businesses found');
+            document.getElementById('results-page-status').textContent =
+                'Page ' + currentPage + ' of ' + totalPages;
+            document.getElementById('results-previous').disabled = currentPage === 1;
+            document.getElementById('results-next').disabled =
+                currentPage === totalPages || filteredRows.length === 0;
         }
 
         function parseCSV(text) {
@@ -103,9 +173,8 @@
 
         function updateResults(rows) {
             tableRows = rows;
-            document.getElementById('results-count').textContent =
-                rows.length + (rows.length === 1 ? ' business found' : ' businesses found');
-            renderTable(rows);
+            currentPage = 1;
+            applyResultsView();
         }
 
         var downloadURL = '/download?id=' + encodeURIComponent(window.currentJobId || '');
@@ -128,13 +197,39 @@
             button.addEventListener('click', function () {
                 var key = button.getAttribute('data-sort');
                 sortDirections[key] = sortDirections[key] === 'desc' ? 'asc' : 'desc';
-                tableRows.sort(function (a, b) {
-                    var result = Number(a[key] || 0) - Number(b[key] || 0);
-                    return sortDirections[key] === 'asc' ? result : -result;
+                activeSort = key;
+                currentPage = 1;
+                document.querySelectorAll('.sort-button').forEach(function (sortButton) {
+                    if (sortButton !== button) { sortButton.textContent = '↕'; }
                 });
                 button.textContent = sortDirections[key] === 'asc' ? '↑' : '↓';
-                renderTable(tableRows);
+                applyResultsView();
             });
+        });
+
+        document.getElementById('results-filter').addEventListener('input', function () {
+            currentPage = 1;
+            applyResultsView();
+        });
+
+        document.getElementById('results-page-size').addEventListener('change', function (event) {
+            pageSize = Number(event.target.value);
+            currentPage = 1;
+            applyResultsView();
+        });
+
+        document.getElementById('results-previous').addEventListener('click', function () {
+            if (currentPage > 1) {
+                currentPage--;
+                applyResultsView();
+            }
+        });
+
+        document.getElementById('results-next').addEventListener('click', function () {
+            if (currentPage * pageSize < filteredRows.length) {
+                currentPage++;
+                applyResultsView();
+            }
         });
 
         function ensureLeaflet(callback) {
