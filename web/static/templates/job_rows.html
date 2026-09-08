@@ -1,14 +1,15 @@
 {{range .}}
-<tr>
+<tr data-job-id="{{.ID}}" data-status="{{.Status}}">
     <td>{{.ID}}</td>
     <td>{{.Name}}</td>
     <td>{{.Date}}</td>
-    <td>
+    <td class="actions">
         <span class="status-indicator status-{{.Status}}">{{.Status}}</span>
     </td>
     <td>
         {{ if eq .Status "ok" }}
             <button type="button" class="button view-button"
+                    onclick="window.currentJobId='{{.ID}}'"
                     hx-get="/view?id={{.ID}}"
                     hx-target="#map-modal-container"
                     hx-swap="innerHTML">View</button>

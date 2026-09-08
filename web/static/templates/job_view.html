@@ -1,29 +1,144 @@
 <div id="map-modal" class="map-modal" role="dialog" aria-modal="true" aria-labelledby="map-modal-title" onclick="if(event.target===this)closeJobMap()">
     <div class="map-modal-content">
         <div class="map-modal-header">
-            <h2 id="map-modal-title">Places</h2>
-            <button type="button" class="map-modal-close" aria-label="Close" onclick="closeJobMap()">&times;</button>
+            <h2 id="map-modal-title">Scrape results</h2>
+            <button type="button" class="map-modal-close" aria-label="Close results" onclick="closeJobMap()">&times;</button>
         </div>
         <div class="map-modal-body">
-            <div id="job-map"></div>
-            <div id="job-places-list"></div>
+            <div class="results-toolbar">
+                <p id="results-count">Loading results…</p>
+                <a id="results-export" class="button download-button" href="#" download>Export CSV</a>
+            </div>
+            <div class="table-scroll">
+                <table id="results-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Rating <button type="button" class="sort-button" data-sort="review_rating" aria-label="Sort by rating">↕</button></th>
+                            <th>Reviews <button type="button" class="sort-button" data-sort="review_count" aria-label="Sort by review count">↕</button></th>
+                            <th>Phone</th>
+                            <th>Website</th>
+                            <th>Address</th>
+                            <th>Category</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="map-panel">
+                <div id="job-map"></div>
+                <div id="job-places-list"></div>
+            </div>
         </div>
     </div>
     <script>
     (function () {
         var places = {{ . }};
-
+        var tableRows = places.slice();
+        var sortDirections = {};
         var LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
         var LEAFLET_JS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
 
-        // ensureLeaflet lazily loads Leaflet (CSS + JS) the first time the map
-        // is opened, then invokes callback once it is available.
-        function ensureLeaflet(callback) {
-            if (window.L) {
-                callback();
-                return;
-            }
+        function escapeHtml(value) {
+            var div = document.createElement('div');
+            div.textContent = value == null ? '' : String(value);
+            return div.innerHTML;
+        }
 
+        function safeURL(value) {
+            return /^https?:\/\//i.test(value || '') ? encodeURI(value) : '';
+        }
+
+        function renderTable(rows) {
+            var body = document.querySelector('#results-table tbody');
+            body.innerHTML = rows.map(function (place) {
+                var website = safeURL(place.website);
+                return '<tr>' +
+                    '<td><strong>' + escapeHtml(place.title || '—') + '</strong></td>' +
+                    '<td>' + (place.review_rating ? '★ ' + escapeHtml(place.review_rating) : '—') + '</td>' +
+                    '<td>' + (place.review_count || '—') + '</td>' +
+                    '<td>' + escapeHtml(place.phone || '—') + '</td>' +
+                    '<td>' + (website ? '<a class="website-link" href="' + website + '" target="_blank" rel="noopener noreferrer">Visit site ↗</a>' : '—') + '</td>' +
+                    '<td>' + escapeHtml(place.address || '—') + '</td>' +
+                    '<td>' + escapeHtml(place.category || '—') + '</td>' +
+                '</tr>';
+            }).join('');
+        }
+
+        function parseCSV(text) {
+            var rows = [], row = [], value = '', quoted = false;
+            for (var i = 0; i < text.length; i++) {
+                var char = text[i];
+                if (quoted) {
+                    if (char === '"' && text[i + 1] === '"') { value += '"'; i++; }
+                    else if (char === '"') { quoted = false; }
+                    else { value += char; }
+                } else if (char === '"') {
+                    quoted = true;
+                } else if (char === ',') {
+                    row.push(value); value = '';
+                } else if (char === '\n') {
+                    row.push(value); rows.push(row); row = []; value = '';
+                } else if (char !== '\r') {
+                    value += char;
+                }
+            }
+            if (value || row.length) { row.push(value); rows.push(row); }
+            if (rows.length < 2) { return []; }
+            var headers = rows.shift();
+            return rows.filter(function (values) { return values.some(Boolean); }).map(function (values) {
+                var record = {};
+                headers.forEach(function (header, index) { record[header] = values[index] || ''; });
+                return {
+                    title: record.title,
+                    review_rating: Number(record.review_rating || 0),
+                    review_count: Number(record.review_count || 0),
+                    phone: record.phone,
+                    website: record.web_site || record.website,
+                    address: record.address,
+                    category: record.category
+                };
+            });
+        }
+
+        function updateResults(rows) {
+            tableRows = rows;
+            document.getElementById('results-count').textContent =
+                rows.length + (rows.length === 1 ? ' business found' : ' businesses found');
+            renderTable(rows);
+        }
+
+        var downloadURL = '/download?id=' + encodeURIComponent(window.currentJobId || '');
+        document.getElementById('results-export').href = downloadURL;
+        updateResults(tableRows);
+        fetch(downloadURL)
+            .then(function (response) {
+                if (!response.ok) { throw new Error('CSV unavailable'); }
+                return response.text();
+            })
+            .then(function (csv) {
+                var completeRows = parseCSV(csv);
+                if (completeRows.length) { updateResults(completeRows); }
+            })
+            .catch(function () {
+                /* The map payload remains a usable fallback if CSV loading fails. */
+            });
+
+        document.querySelectorAll('.sort-button').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var key = button.getAttribute('data-sort');
+                sortDirections[key] = sortDirections[key] === 'desc' ? 'asc' : 'desc';
+                tableRows.sort(function (a, b) {
+                    var result = Number(a[key] || 0) - Number(b[key] || 0);
+                    return sortDirections[key] === 'asc' ? result : -result;
+                });
+                button.textContent = sortDirections[key] === 'asc' ? '↑' : '↓';
+                renderTable(tableRows);
+            });
+        });
+
+        function ensureLeaflet(callback) {
+            if (window.L) { callback(); return; }
             if (!document.getElementById('leaflet-css')) {
                 var link = document.createElement('link');
                 link.id = 'leaflet-css';
@@ -31,7 +146,6 @@
                 link.href = LEAFLET_CSS;
                 document.head.appendChild(link);
             }
-
             var script = document.getElementById('leaflet-js');
             if (!script) {
                 script = document.createElement('script');
@@ -39,98 +153,46 @@
                 script.src = LEAFLET_JS;
                 document.head.appendChild(script);
             }
-
-            script.addEventListener('load', callback);
+            script.addEventListener('load', callback, { once: true });
         }
 
-        function escapeHtml(str) {
-            var div = document.createElement('div');
-            div.textContent = str == null ? '' : str;
-            return div.innerHTML;
-        }
-
-        function createMap() {
-            if (window.__jobMap) {
-                window.__jobMap.remove();
-            }
-
+        function initJobMap() {
+            if (window.__jobMap) { window.__jobMap.remove(); }
             var map = L.map('job-map');
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19,
                 attribution: '© OpenStreetMap contributors'
             }).addTo(map);
-
             window.__jobMap = map;
-            return map;
-        }
-
-        function placePopup(place) {
-            var parts = ['<strong>' + escapeHtml(place.title) + '</strong>'];
-            if (place.address) {
-                parts.push(escapeHtml(place.address));
-            }
-            if (place.link && /^https?:\/\//i.test(place.link)) {
-                parts.push('<a href="' + encodeURI(place.link) + '" target="_blank" rel="noopener noreferrer">View on Google Maps</a>');
-            }
-            return parts.join('<br>');
-        }
-
-        function placeListItem(place, onSelect) {
-            var item = document.createElement('div');
-            item.className = 'place-item';
-            item.innerHTML = '<div class="place-title">' + escapeHtml(place.title) + '</div>' +
-                (place.address ? '<div class="place-address">' + escapeHtml(place.address) + '</div>' : '') +
-                (place.review_rating ? '<div class="place-rating">★ ' + escapeHtml(String(place.review_rating)) + '</div>' : '');
-            item.addEventListener('click', onSelect);
-            return item;
-        }
-
-        function renderPlaces(map, listEl) {
+            var list = document.getElementById('job-places-list');
             var bounds = [];
 
             places.forEach(function (place) {
                 var latlng = [place.latitude, place.longitude];
                 bounds.push(latlng);
-
-                L.marker(latlng).bindPopup(placePopup(place)).addTo(map);
-                listEl.appendChild(placeListItem(place, function () {
-                    map.setView(latlng, 16);
-                }));
+                var popup = '<strong>' + escapeHtml(place.title) + '</strong><br>' + escapeHtml(place.address || '');
+                L.marker(latlng).bindPopup(popup).addTo(map);
+                var item = document.createElement('div');
+                item.className = 'place-item';
+                item.innerHTML = '<div class="place-title">' + escapeHtml(place.title) + '</div>' +
+                    '<div class="place-address">' + escapeHtml(place.address || '') + '</div>' +
+                    (place.review_rating ? '<div class="place-rating">★ ' + escapeHtml(place.review_rating) + '</div>' : '');
+                item.addEventListener('click', function () { map.setView(latlng, 16); });
+                list.appendChild(item);
             });
 
-            map.fitBounds(bounds, { padding: [30, 30] });
+            if (bounds.length) {
+                map.fitBounds(bounds, { padding: [30, 30] });
+            } else {
+                list.innerHTML = '<p class="map-empty">No places with coordinates were found.</p>';
+                map.setView([0, 0], 2);
+            }
             setTimeout(function () { map.invalidateSize(); }, 0);
         }
 
-        function showEmptyState(map, listEl) {
-            listEl.innerHTML = '<p class="map-empty">No places with coordinates were found for this job.</p>';
-            map.setView([0, 0], 2);
-        }
-
-        function initJobMap() {
-            var listEl = document.getElementById('job-places-list');
-            var map = createMap();
-
-            listEl.innerHTML = '';
-
-            if (places.length === 0) {
-                showEmptyState(map, listEl);
-                return;
-            }
-
-            renderPlaces(map, listEl);
-        }
-
         window.closeJobMap = function () {
-            if (window.__jobMap) {
-                window.__jobMap.remove();
-                window.__jobMap = null;
-            }
-
-            var container = document.getElementById('map-modal-container');
-            if (container) {
-                container.innerHTML = '';
-            }
+            if (window.__jobMap) { window.__jobMap.remove(); window.__jobMap = null; }
+            document.getElementById('map-modal-container').innerHTML = '';
         };
 
         ensureLeaflet(initJobMap);
